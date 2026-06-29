@@ -1,0 +1,12 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Local CA material — NEVER commit a CA private key.
+/ca
+*.key
+
+# Editor / OS
+.DS_Store
+*.swp

@@ -1,0 +1,13 @@
+# Build artifacts and VCS — never needed in the build context.
+target/
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+README.md
+# Local CA material must never leak into an image layer.
+ca/
+**/*.key
+**/*.rs.bk
+.DS_Store
+*.swp

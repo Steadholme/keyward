@@ -9,8 +9,8 @@
 //!   cargo test --test pg_store -- --nocapture
 //! ```
 //!
-//! Requires a multi-threaded runtime: the synchronous `Store` trait bridges to async
-//! sqlx via `block_in_place`, which only works on the multi_thread scheduler.
+//! The `Store` trait is async: handlers and this test `.await` it directly and `PgStore`
+//! drives sqlx natively (no `block_in_place`, no sync-over-async bridge).
 
 use std::sync::Arc;
 
@@ -43,7 +43,7 @@ async fn pg_store_full_integration() {
     let mut state = build_dev_state();
     state.store = Arc::new(pg);
 
-    // --- direct Store-trait round-trip (sync over async sqlx) --------------
+    // --- direct Store-trait round-trip (native async sqlx) -----------------
     let rec = CertRecord {
         serial: "0badc0de0badc0de0badc0de0badc0de".to_string(),
         common_name: "direct.internal".to_string(),
@@ -56,26 +56,26 @@ async fn pg_store_full_integration() {
         reason: None,
         pem: "-----BEGIN CERTIFICATE-----\nXX\n-----END CERTIFICATE-----\n".to_string(),
     };
-    state.store.insert_cert(rec.clone());
+    state.store.insert_cert(rec.clone()).await;
     // ON CONFLICT DO NOTHING — re-insert is a no-op, not an error.
-    state.store.insert_cert(rec.clone());
-    let got = state.store.get_cert(&rec.serial).expect("cert present");
+    state.store.insert_cert(rec.clone()).await;
+    let got = state.store.get_cert(&rec.serial).await.expect("cert present");
     assert_eq!(got.common_name, "direct.internal");
     assert_eq!(got.sans, "direct.internal,10.0.0.1");
     assert!(!got.revoked);
-    assert!(state.store.get_cert("ffff").is_none(), "unknown serial");
+    assert!(state.store.get_cert("ffff").await.is_none(), "unknown serial");
 
-    assert!(state.store.list_revoked().is_empty(), "nothing revoked yet");
+    assert!(state.store.list_revoked().await.is_empty(), "nothing revoked yet");
     assert!(
-        state.store.revoke(&rec.serial, 1500, Some("superseded")),
+        state.store.revoke(&rec.serial, 1500, Some("superseded")).await,
         "revoke an existing serial"
     );
-    assert!(!state.store.revoke("ffff", 1500, None), "revoke unknown -> false");
-    let revoked = state.store.list_revoked();
+    assert!(!state.store.revoke("ffff", 1500, None).await, "revoke unknown -> false");
+    let revoked = state.store.list_revoked().await;
     assert_eq!(revoked.len(), 1);
     assert_eq!(revoked[0].serial, rec.serial);
     assert_eq!(revoked[0].reason.as_deref(), Some("superseded"));
-    let got = state.store.get_cert(&rec.serial).unwrap();
+    let got = state.store.get_cert(&rec.serial).await.unwrap();
     assert!(got.revoked && got.revoked_at == Some(1500));
 
     // --- full HTTP flow through the PG-backed app --------------------------
@@ -91,7 +91,7 @@ async fn pg_store_full_integration() {
     assert!(issued["key_pem"].as_str().unwrap().contains("PRIVATE KEY"));
 
     // The issued cert was persisted into Postgres.
-    let stored = state.store.get_cert(&serial).expect("issued cert persisted");
+    let stored = state.store.get_cert(&serial).await.expect("issued cert persisted");
     assert_eq!(stored.profile, "peer");
     assert_eq!(stored.common_name, "svc.pg.internal");
 

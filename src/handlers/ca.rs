@@ -38,7 +38,7 @@ pub async fn bundle_pem(State(state): State<AppState>) -> Response {
 /// `GET /ca/crl.pem` — a freshly generated, CA-signed CRL (PEM) listing every revoked
 /// serial. Regenerated per request from the store so it always reflects current state.
 pub async fn crl_pem(State(state): State<AppState>) -> Result<Response, AppError> {
-    let revoked = state.store.list_revoked();
+    let revoked = state.store.list_revoked().await;
     let pem = ca::build_crl(&state.ca, &revoked)?;
     Ok(pem_response(pem))
 }
@@ -82,7 +82,7 @@ pub async fn sign_csr(
     let ttl_hours = state.config.resolve_leaf_hours(req.ttl_hours);
 
     let issued = ca::sign_csr(&state.ca, &req.csr_pem, ttl_hours, profile)?;
-    persist(&state, &issued);
+    persist(&state, &issued).await;
 
     Ok(Json(IssuedResponse {
         serial: issued.serial,
@@ -130,7 +130,7 @@ pub async fn issue(
             profile,
         },
     )?;
-    persist(&state, &issued);
+    persist(&state, &issued).await;
 
     Ok(Json(IssuedResponse {
         serial: issued.serial,
@@ -169,7 +169,8 @@ pub async fn revoke(
     let revoked_at = now_secs();
     let ok = state
         .store
-        .revoke(&req.serial, revoked_at, req.reason.as_deref());
+        .revoke(&req.serial, revoked_at, req.reason.as_deref())
+        .await;
     if !ok {
         return Err(AppError::NotFound(format!(
             "unknown serial '{}'",
@@ -184,7 +185,7 @@ pub async fn revoke(
 }
 
 /// Persist an issued cert's registry row. The private key is intentionally NOT stored.
-fn persist(state: &AppState, issued: &ca::Issued) {
+async fn persist(state: &AppState, issued: &ca::Issued) {
     state.store.insert_cert(CertRecord {
         serial: issued.serial.clone(),
         common_name: issued.common_name.clone(),
@@ -196,5 +197,6 @@ fn persist(state: &AppState, issued: &ca::Issued) {
         revoked_at: None,
         reason: None,
         pem: issued.cert_pem.clone(),
-    });
+    })
+    .await;
 }

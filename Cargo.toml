@@ -16,9 +16,13 @@ path = "src/main.rs"
 [dependencies]
 # HTTP framework (shared with keystone): Json/State extractors, typed responses.
 axum = "0.8"
-# Async runtime axum runs on. multi-thread is load-bearing: the synchronous Store
-# trait bridges to async sqlx via block_in_place (same pattern as keystone).
+# Async runtime axum runs on. The Store trait is async: handlers `.await` it directly and
+# PgStore uses sqlx natively, so a worker thread is NEVER blocked (no sync-over-async bridge).
+# multi-thread keeps the serving runtime parallel for concurrent issuance / CRL reads.
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Erase the async Store trait methods so `Arc<dyn Store>` stays object-safe (handlers depend
+# only on the trait, exactly like the keystone seam).
+async-trait = "0.1"
 # X.509 toolkit: Root CA + leaf issuance, CSR signing, and CRL generation.
 # `ring` backend (NOT the default aws_lc_rs) avoids the C/cmake/nasm toolchain —
 # same portability choice keystone made by pinning its crypto provider. `pem`

@@ -10,6 +10,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use async_trait::async_trait;
+
 use crate::ca::RevokedEntry;
 
 /// One issued certificate's registry row (maps 1:1 to `ca_certificates`).
@@ -29,16 +31,19 @@ pub struct CertRecord {
     pub pem: String,
 }
 
-/// Pluggable certificate registry. No `.await` is ever held across the internal lock.
+/// Pluggable certificate registry. Methods are `async`: the axum handlers `.await` them
+/// directly on the serving runtime, so a registry/CRL read can never block a worker thread.
+/// The in-memory store's `std::sync::Mutex` is never held across a yield point.
+#[async_trait]
 pub trait Store: Send + Sync {
     /// Record a newly issued certificate.
-    fn insert_cert(&self, rec: CertRecord);
+    async fn insert_cert(&self, rec: CertRecord);
     /// Look up a certificate by serial.
-    fn get_cert(&self, serial: &str) -> Option<CertRecord>;
+    async fn get_cert(&self, serial: &str) -> Option<CertRecord>;
     /// Mark a serial revoked (idempotent). Returns `true` if the serial exists.
-    fn revoke(&self, serial: &str, revoked_at: i64, reason: Option<&str>) -> bool;
+    async fn revoke(&self, serial: &str, revoked_at: i64, reason: Option<&str>) -> bool;
     /// All revoked entries, for CRL generation.
-    fn list_revoked(&self) -> Vec<RevokedEntry>;
+    async fn list_revoked(&self) -> Vec<RevokedEntry>;
 }
 
 /// In-memory `Store`. `std::sync::Mutex<HashMap>` — no async lock needed. The default
@@ -54,15 +59,18 @@ impl InMemoryStore {
     }
 }
 
+#[async_trait]
 impl Store for InMemoryStore {
-    fn insert_cert(&self, rec: CertRecord) {
+    async fn insert_cert(&self, rec: CertRecord) {
+        // The std `Mutex` is fine here: the whole critical section is synchronous (no `.await`
+        // inside), so the guard is never held across a yield point.
         self.certs
             .lock()
             .expect("certs lock poisoned")
             .insert(rec.serial.clone(), rec);
     }
 
-    fn get_cert(&self, serial: &str) -> Option<CertRecord> {
+    async fn get_cert(&self, serial: &str) -> Option<CertRecord> {
         self.certs
             .lock()
             .expect("certs lock poisoned")
@@ -70,7 +78,7 @@ impl Store for InMemoryStore {
             .cloned()
     }
 
-    fn revoke(&self, serial: &str, revoked_at: i64, reason: Option<&str>) -> bool {
+    async fn revoke(&self, serial: &str, revoked_at: i64, reason: Option<&str>) -> bool {
         let mut certs = self.certs.lock().expect("certs lock poisoned");
         match certs.get_mut(serial) {
             Some(rec) => {
@@ -83,7 +91,7 @@ impl Store for InMemoryStore {
         }
     }
 
-    fn list_revoked(&self) -> Vec<RevokedEntry> {
+    async fn list_revoked(&self) -> Vec<RevokedEntry> {
         self.certs
             .lock()
             .expect("certs lock poisoned")
@@ -102,44 +110,33 @@ impl Store for InMemoryStore {
 // PostgreSQL-backed `Store` (portable: standard SQL, runtime queries, no macros).
 // --------------------------------------------------------------------------------------
 //
-// Selected at runtime by `KEYWARD_STORE=postgres`. The `Store` trait is synchronous
-// (handlers never `.await` the store), so each method bridges to async sqlx via
-// `block_in_place` + the runtime `Handle` — the same pattern keystone uses. This needs a
-// multi-threaded Tokio runtime, which production (`#[tokio::main]`) and the
-// `multi_thread` integration test both provide.
+// Selected at runtime by `KEYWARD_STORE=postgres`. The `Store` trait is async, so each method
+// uses sqlx natively and the handlers `.await` it on the serving runtime — there is NO
+// `block_in_place` and NO sync-over-async bridge, so a registry/CRL read never blocks a worker
+// thread.
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
 
-/// PostgreSQL-backed [`Store`]. Holds a `PgPool` plus the runtime [`Handle`] used to
-/// drive async queries to completion from the synchronous trait methods.
-///
-/// [`Handle`]: tokio::runtime::Handle
+/// PostgreSQL-backed [`Store`]. Holds a `PgPool`; the async trait methods drive sqlx
+/// natively, so no worker thread is ever blocked on a DB round-trip.
 pub struct PgStore {
     pool: PgPool,
-    handle: tokio::runtime::Handle,
 }
 
 impl PgStore {
-    /// Open a pooled connection. Captures the current runtime handle for the sync→async
-    /// bridge; must be called from within a Tokio runtime.
+    /// Open a pooled connection. Async; call from within a Tokio runtime.
     pub async fn connect(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(8)
             .connect(database_url)
             .await?;
-        Ok(Self {
-            pool,
-            handle: tokio::runtime::Handle::current(),
-        })
+        Ok(Self::from_pool(pool))
     }
 
     /// Construct from an existing pool (used by tests that share a pool).
     pub fn from_pool(pool: PgPool) -> Self {
-        Self {
-            pool,
-            handle: tokio::runtime::Handle::current(),
-        }
+        Self { pool }
     }
 
     /// Idempotent, portable migration. Standard SQL only — safe to run on every startup.
@@ -249,41 +246,36 @@ impl PgStore {
         }
         Ok(out)
     }
-
-    /// Drive an async DB op to completion from a synchronous trait method.
-    fn block_on<F: std::future::Future>(&self, fut: F) -> F::Output {
-        tokio::task::block_in_place(|| self.handle.block_on(fut))
-    }
 }
 
+#[async_trait]
 impl Store for PgStore {
-    fn insert_cert(&self, rec: CertRecord) {
-        if let Err(e) = self.block_on(self.insert_cert_async(&rec)) {
+    async fn insert_cert(&self, rec: CertRecord) {
+        if let Err(e) = self.insert_cert_async(&rec).await {
             tracing::error!(error = %e, "pg insert_cert failed");
         }
     }
 
-    fn get_cert(&self, serial: &str) -> Option<CertRecord> {
-        self.block_on(self.get_cert_async(serial))
-            .unwrap_or_else(|e| {
-                tracing::error!(error = %e, "pg get_cert failed");
-                None
-            })
+    async fn get_cert(&self, serial: &str) -> Option<CertRecord> {
+        self.get_cert_async(serial).await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "pg get_cert failed");
+            None
+        })
     }
 
-    fn revoke(&self, serial: &str, revoked_at: i64, reason: Option<&str>) -> bool {
-        self.block_on(self.revoke_async(serial, revoked_at, reason))
+    async fn revoke(&self, serial: &str, revoked_at: i64, reason: Option<&str>) -> bool {
+        self.revoke_async(serial, revoked_at, reason)
+            .await
             .unwrap_or_else(|e| {
                 tracing::error!(error = %e, "pg revoke failed");
                 false
             })
     }
 
-    fn list_revoked(&self) -> Vec<RevokedEntry> {
-        self.block_on(self.list_revoked_async())
-            .unwrap_or_else(|e| {
-                tracing::error!(error = %e, "pg list_revoked failed");
-                Vec::new()
-            })
+    async fn list_revoked(&self) -> Vec<RevokedEntry> {
+        self.list_revoked_async().await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "pg list_revoked failed");
+            Vec::new()
+        })
     }
 }

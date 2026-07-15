@@ -2,7 +2,7 @@
 name = "keyward"
 version = "0.1.0"
 edition = "2021"
-description = "Keyward — internal CA / PKI authority (root CA + leaf issuance + CRL) for the HOLDFAST stack."
+description = "Keyward — internal CA / PKI authority (root CA + leaf issuance + CRL) for the Steadholme stack."
 license = "MIT OR Apache-2.0"
 
 [lib]

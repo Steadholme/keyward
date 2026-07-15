@@ -1,4 +1,4 @@
-//! Keyward — internal CA / PKI authority (codename Citadel) for the HOLDFAST stack.
+//! Keyward — internal CA / PKI authority (codename Citadel) for the Steadholme stack.
 //!
 //! Library root: defines [`AppState`], wires the routes via [`app`], and provides
 //! [`build_dev_state`] (in-memory store + ephemeral Root CA) and [`build_state_from_env`]

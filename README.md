@@ -1,6 +1,6 @@
 # Keyward
 
-Keyward（代号 **Citadel**）是 HOLDFAST 内网的 **CA / PKI 颁发机构（internal Certificate
+Keyward（代号 **Citadel**）是 Steadholme 内网的 **CA / PKI 颁发机构（internal Certificate
 Authority）**，用 Rust（axum 0.8）实现。它在首次启动时生成一个**自签名 Root CA**，持久化到磁盘，
 之后对内网服务签发 / 续签**叶子证书（leaf）**，并维护**证书吊销列表（CRL）**。
 

@@ -148,8 +148,8 @@ docker rm -f kw-testpg
 ## Docker
 
 ```bash
-docker build -t holdfast/keyward:dev .
-docker run --rm -p 127.0.0.1:8200:8200 -v keyward_ca:/ca holdfast/keyward:dev
+docker build -t steadholme/keyward:dev .
+docker run --rm -p 127.0.0.1:8200:8200 -v keyward_ca:/ca steadholme/keyward:dev
 curl -s http://127.0.0.1:8200/healthz   # ok
 ```
 

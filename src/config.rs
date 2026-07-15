@@ -9,7 +9,7 @@ pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8200";
 /// Default persistent CA material directory (cert + key PEM).
 pub const DEFAULT_CA_DIR: &str = "/ca";
 /// Default Root CA subject common name.
-pub const DEFAULT_CA_CN: &str = "HOLDFAST Root CA";
+pub const DEFAULT_CA_CN: &str = "Steadholme Root CA";
 /// Default Root CA lifetime in days (~10 years).
 pub const DEFAULT_CA_TTL_DAYS: u64 = 3650;
 /// Default (and maximum) leaf certificate lifetime in days.

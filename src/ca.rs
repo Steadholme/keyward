@@ -462,11 +462,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("keyward-ca-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
 
-        let first = CaMaterial::load_or_generate(&dir, "HOLDFAST Root CA", 3650).unwrap();
+        let first = CaMaterial::load_or_generate(&dir, "Steadholme Root CA", 3650).unwrap();
         assert!(dir.join(CA_CERT_FILE).exists(), "ca.crt written");
         assert!(dir.join(CA_KEY_FILE).exists(), "ca.key written");
 
-        let second = CaMaterial::load_or_generate(&dir, "HOLDFAST Root CA", 3650).unwrap();
+        let second = CaMaterial::load_or_generate(&dir, "Steadholme Root CA", 3650).unwrap();
         assert_eq!(
             first.cert_pem, second.cert_pem,
             "reload reproduces the SAME CA cert"
@@ -492,8 +492,8 @@ mod tests {
     /// persistence, not a constant key), and the CA can sign a verifiable leaf.
     #[test]
     fn generated_ca_issues_a_chaining_leaf() {
-        let ca = CaMaterial::generate("HOLDFAST Root CA", 3650).unwrap();
-        let other = CaMaterial::generate("HOLDFAST Root CA", 3650).unwrap();
+        let ca = CaMaterial::generate("Steadholme Root CA", 3650).unwrap();
+        let other = CaMaterial::generate("Steadholme Root CA", 3650).unwrap();
         assert_ne!(ca.cert_pem, other.cert_pem, "independent CAs differ");
 
         let issued = issue(
